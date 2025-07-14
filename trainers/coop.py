@@ -13,6 +13,8 @@ from dassl.optim import build_optimizer, build_lr_scheduler
 from clip import clip
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
 
+import json 
+
 _tokenizer = _Tokenizer()
 
 
@@ -311,11 +313,6 @@ class CoOp(TrainerX):
 
         if (self.batch_idx + 1) == self.num_batches:
             self.update_lr()
-
-        optimized_prompts = self.model.prompt_learner.get_hard_prompt_texts()
-        classnames = self.dm.dataset.classnames
-        for classname, prompt in zip(classnames, optimized_prompts):
-            print(f"Class: {classname}, Optimized Prompt: '{prompt}'")
             
         return loss_summary
 
@@ -359,3 +356,50 @@ class CoOp(TrainerX):
             print("Loading weights to {} " 'from "{}" (epoch = {})'.format(name, model_path, epoch))
             # set strict=False
             self._models[name].load_state_dict(state_dict, strict=False)
+            
+    def update_prompt_log(self, epoch):
+        """
+        Saves or updates the current hard prompts to a single JSON file.
+        The epoch number is used as the key.
+        """
+        # 저장할 파일 경로 설정 (예: output/experiment_name/prompt_log.json)
+        filepath = osp.join(self.cfg.OUTPUT_DIR, "prompt_log.json")
+        
+        # 최신 프롬프트 텍스트 가져오기
+        hard_prompts = self.model.prompt_learner.get_hard_prompt_texts()
+        classnames = self.dm.dataset.classnames
+        
+        # 현재 에포크의 프롬프트를 딕셔너리 형태로 구성
+        current_epoch_prompts = {
+            classname: prompt for classname, prompt in zip(classnames, hard_prompts)
+        }
+        
+        # 파일이 존재하면 기존 데이터를 불러오고, 없으면 새 딕셔너리 생성
+        if osp.exists(filepath):
+            with open(filepath, "r") as f:
+                log_data = json.load(f)
+        else:
+            log_data = {}
+            
+        # 현재 에포크 데이터를 추가
+        log_data[epoch] = current_epoch_prompts
+        
+        # JSON 파일에 다시 저장 (pretty-printing을 위해 indent 사용)
+        with open(filepath, "w") as f:
+            json.dump(log_data, f, indent=4)
+            
+    def train(self):
+        """Generic training script."""
+        self.before_train()
+        for self.epoch in range(self.start_epoch, self.max_epoch):
+            self.before_epoch()
+            self.run_epoch()
+            self.after_epoch()
+
+            # ==================================================
+            # CHANGED: Update the prompt log at the end of each epoch
+            # ==================================================
+            self.update_prompt_log(self.epoch)
+            # ==================================================
+
+        self.after_train()
